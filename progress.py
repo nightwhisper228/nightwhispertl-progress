@@ -1,124 +1,153 @@
 import os
 import re
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
+import json
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime, timezone, timedelta
 
-PAGE_URL = "https://visual-novel-chart.ru/translation/utawarerumono"
-WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].rstrip("/")
-MESSAGE_ID = os.environ.get("DISCORD_MESSAGE_ID", "").strip()
+WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"]
+MESSAGE_ID = os.environ["DISCORD_MESSAGE_ID"]
 
+URL = "https://visual-novel-chart.ru/translation/utawarerumono"
 
-def get_number(text, label):
-    match = re.search(
-        rf"{re.escape(label)}\s*:\s*([\d\s]+)",
-        text,
-        flags=re.IGNORECASE,
-    )
+GAME_TITLE = "Utawarerumono: Prelude to the Fallen"
+GAME_URL = "https://visual-novel-chart.ru/translation/utawarerumono"
 
-    if not match:
-        raise RuntimeError(f"Не удалось найти поле: {label}")
+# Можешь потом заменить на другую картинку, если захочешь
+THUMBNAIL_URL = "https://upload.wikimedia.org/wikipedia/en/3/31/Utawarerumono_Prelude_to_the_Fallen_cover.jpg"
 
-    return int(re.sub(r"\D", "", match.group(1)))
+EMBED_COLOR = 0x5865F2  # Discord blurple
 
 
-def format_number(value):
-    return f"{value:,}".replace(",", " ")
+def make_bar(percent, length=18):
+    filled = round(percent / 100 * length)
+    empty = length - filled
+    return "█" * filled + "░" * empty
 
 
-def progress_bar(percent, width=20):
-    filled = round(percent / 100 * width)
-    filled = max(0, min(width, filled))
-    return "█" * filled + "░" * (width - filled)
+def extract_numbers(text):
+    """
+    Пытается вытащить:
+    - процент
+    - текущие строки
+    - всего строк
+
+    Подстраивается под формат вроде:
+    '54.2% (1234 / 2276)'
+    """
+    percent = 0.0
+    current = 0
+    total = 0
+
+    percent_match = re.search(r"(\d+(?:[.,]\d+)?)\s*%", text)
+    if percent_match:
+        percent = float(percent_match.group(1).replace(",", "."))
+
+    frac_match = re.search(r"(\d+)\s*/\s*(\d+)", text)
+    if frac_match:
+        current = int(frac_match.group(1))
+        total = int(frac_match.group(2))
+
+    return percent, current, total
 
 
-response = requests.get(
-    PAGE_URL,
-    timeout=30,
-    headers={
-        "User-Agent": "NightwhisperTL translation progress monitor"
-    },
-)
-response.raise_for_status()
+def find_progress_data(soup):
+    """
+    Ищем на странице блоки:
+    Перевод / Редактура / Редактура 2
+    и превращаем Редактура 2 -> Вычитка
+    """
+    text = soup.get_text("\n", strip=True)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
 
-soup = BeautifulSoup(response.text, "html.parser")
-text = soup.get_text(" ", strip=True).replace("\xa0", " ")
-
-total = get_number(text, "Всего строк")
-translation = get_number(text, "Перевод")
-editing = get_number(text, "Редактура 1")
-proofreading = get_number(text, "Редактура 2")
-
-
-def make_field(name, value):
-    percent = value / total * 100 if total else 0
-
-    return {
-        "name": name,
-        "value": (
-            f"`{progress_bar(percent)}`\n"
-            f"**{percent:.2f}%** — "
-            f"{format_number(value)} / {format_number(total)}"
-        ),
-        "inline": False,
+    result = {
+        "Перевод": {"percent": 0.0, "current": 0, "total": 0},
+        "Редактура": {"percent": 0.0, "current": 0, "total": 0},
+        "Вычитка": {"percent": 0.0, "current": 0, "total": 0},
     }
 
+    mapping = {
+        "Перевод": "Перевод",
+        "Редактура": "Редактура",
+        "Редактура 2": "Вычитка",
+    }
 
-now = datetime.now(ZoneInfo("Europe/Kyiv"))
+    for i, line in enumerate(lines):
+        if line in mapping:
+            label = mapping[line]
 
-payload = {
-    "username": "NightwhisperTL Progress",
-    "allowed_mentions": {"parse": []},
-    "embeds": [
-        {
-            "title": "📊 Utawarerumono: Prelude to the Fallen",
-            "url": PAGE_URL,
-            "description": "Текущий прогресс перевода",
-            "fields": [
-                make_field("Перевод", translation),
-                make_field("Редактура", editing),
-                make_field("Вычитка", proofreading),
-            ],
-            "footer": {
-                "text": (
-                    "Данные: Visual Novel Chart"
-                    f" • Обновлено {now:%d.%m.%Y %H:%M}"
-                )
-            },
-        }
-    ],
-}
+            # Ищем следующие 1-3 строки, где могут быть проценты / дроби
+            search_chunk = " ".join(lines[i + 1:i + 4])
+            percent, current, total = extract_numbers(search_chunk)
 
-if MESSAGE_ID:
-    result = requests.patch(
-        f"{WEBHOOK_URL}/messages/{MESSAGE_ID}",
-        json=payload,
-        timeout=30,
-    )
-    result.raise_for_status()
+            result[label] = {
+                "percent": percent,
+                "current": current,
+                "total": total,
+            }
 
-    print(f"Обновлено сообщение {MESSAGE_ID}")
+    return result
 
-else:
-    separator = "&" if "?" in WEBHOOK_URL else "?"
 
-    result = requests.post(
-        f"{WEBHOOK_URL}{separator}wait=true",
-        json=payload,
-        timeout=30,
-    )
-    result.raise_for_status()
+def build_field(name, percent, current, total):
+    bar = make_bar(percent)
+    value = f"`{bar}` **{percent:.1f}%**\n{current} / {total}"
+    return {"name": name, "value": value, "inline": False}
 
-    message_id = result.json()["id"]
 
-    print()
-    print("Сообщение успешно создано.")
-    print("Теперь создай GitHub Variable:")
-    print()
-    print("DISCORD_MESSAGE_ID")
-    print()
-    print("со значением:")
-    print()
-    print(message_id)
+def main():
+    response = requests.get(URL, timeout=30)
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    data = find_progress_data(soup)
+
+    now_kyiv = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=3)))
+    updated_at = now_kyiv.strftime("%d.%m.%Y %H:%M")
+
+    embed = {
+        "title": GAME_TITLE,
+        "url": GAME_URL,
+        "description": "Автоматически обновляемый прогресс перевода проекта **NightwhisperTL**.",
+        "color": EMBED_COLOR,
+        "thumbnail": {"url": THUMBNAIL_URL},
+        "fields": [
+            build_field(
+                "Перевод",
+                data["Перевод"]["percent"],
+                data["Перевод"]["current"],
+                data["Перевод"]["total"],
+            ),
+            build_field(
+                "Редактура",
+                data["Редактура"]["percent"],
+                data["Редактура"]["current"],
+                data["Редактура"]["total"],
+            ),
+            build_field(
+                "Вычитка",
+                data["Вычитка"]["percent"],
+                data["Вычитка"]["current"],
+                data["Вычитка"]["total"],
+            ),
+        ],
+        "footer": {
+            "text": f"Источник: visual-novel-chart.ru • Обновлено: {updated_at}"
+        },
+    }
+
+    payload = {
+        "username": "NightwhisperTL Progress",
+        "content": "",
+        "embeds": [embed],
+    }
+
+    edit_url = f"{WEBHOOK_URL}/messages/{MESSAGE_ID}"
+    edit_response = requests.patch(edit_url, json=payload, timeout=30)
+    edit_response.raise_for_status()
+
+    print("Discord message updated successfully.")
+
+
+if __name__ == "__main__":
+    main()
