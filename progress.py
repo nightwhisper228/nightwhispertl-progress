@@ -87,7 +87,7 @@ def make_field(name, current, total, percent):
     }
 
 
-# Получаем страницу Visual Novel Chart
+# Получаем данные с Visual Novel Chart
 response = requests.get(
     PAGE_URL,
     timeout=30,
@@ -113,7 +113,7 @@ text = (
 )
 
 
-# Получаем значения
+# Получаем значения прогресса
 total = get_total(text)
 
 translation, translation_percent = get_stage(
@@ -138,7 +138,7 @@ now = datetime.now(
 )
 
 
-# Первый embed — баннер сверху
+# Верхний embed — баннер Steam
 banner_embed = {
     "url": STEAM_URL,
     "color": 0x5865F2,
@@ -148,16 +148,11 @@ banner_embed = {
 }
 
 
-# Второй embed — основной прогресс
+# Нижний embed — прогресс
 progress_embed = {
     "title": f"📊 {GAME_TITLE}",
 
     "url": PAGE_URL,
-
-    "description": (
-        "Автоматически обновляемый прогресс "
-        "перевода проекта **NightwhisperTL**."
-    ),
 
     "color": 0x5865F2,
 
@@ -208,12 +203,9 @@ payload = {
 }
 
 
-# Обновляем существующее сообщение
+# Обновляем существующее сообщение Discord
 result = requests.patch(
-    (
-        f"{WEBHOOK_URL}/messages/"
-        f"{MESSAGE_ID}"
-    ),
+    f"{WEBHOOK_URL}/messages/{MESSAGE_ID}",
     json=payload,
     timeout=30,
 )
@@ -221,7 +213,7 @@ result = requests.patch(
 result.raise_for_status()
 
 
-# Логи GitHub Actions
+# Лог GitHub Actions
 print("Сообщение успешно обновлено.")
 
 print(
