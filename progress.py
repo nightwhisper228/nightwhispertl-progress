@@ -1,7 +1,6 @@
 import os
 import re
 from datetime import datetime
-from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
 import requests
@@ -9,6 +8,12 @@ from bs4 import BeautifulSoup
 
 
 PAGE_URL = "https://visual-novel-chart.ru/translation/utawarerumono"
+
+BANNER_URL = (
+    "https://shared.fastly.steamstatic.com/"
+    "store_item_assets/steam/apps/1151450/"
+    "header.jpg?t=1732445188"
+)
 
 WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].rstrip("/")
 MESSAGE_ID = os.environ["DISCORD_MESSAGE_ID"].strip()
@@ -39,7 +44,9 @@ def get_total(text):
     )
 
     if not match:
-        raise RuntimeError("Не удалось найти общее количество строк")
+        raise RuntimeError(
+            "Не удалось найти общее количество строк"
+        )
 
     return clean_number(match.group(1))
 
@@ -53,66 +60,110 @@ def get_stage(text, label):
     )
 
     if not match:
-        raise RuntimeError(f"Не удалось найти данные: {label}")
+        raise RuntimeError(
+            f"Не удалось найти данные: {label}"
+        )
 
     current = clean_number(match.group(1))
-    percent = float(match.group(2).replace(",", "."))
+    percent = float(
+        match.group(2).replace(",", ".")
+    )
 
     return current, percent
 
 
-def make_field(name, current, total, percent):
+def make_field(
+    name,
+    current,
+    total,
+    percent,
+):
     return {
         "name": name,
         "value": (
-            f"`{progress_bar(percent)}` **{percent:.2f}%**\n"
-            f"{format_number(current)} / {format_number(total)}"
+            f"`{progress_bar(percent)}` "
+            f"**{percent:.2f}%**\n"
+            f"{format_number(current)} / "
+            f"{format_number(total)}"
         ),
         "inline": False,
     }
 
 
+# Получаем страницу Visual Novel Chart
 response = requests.get(
     PAGE_URL,
     timeout=30,
     headers={
-        "User-Agent": "NightwhisperTL translation progress monitor"
+        "User-Agent": (
+            "NightwhisperTL "
+            "translation progress monitor"
+        )
     },
 )
 
 response.raise_for_status()
 
-soup = BeautifulSoup(response.text, "html.parser")
+soup = BeautifulSoup(
+    response.text,
+    "html.parser",
+)
 
-# Переводим страницу в сплошной текст.
-text = soup.get_text(" ", strip=True).replace("\xa0", " ")
+text = (
+    soup
+    .get_text(" ", strip=True)
+    .replace("\xa0", " ")
+)
 
+
+# Получаем значения
 total = get_total(text)
 
-translation, translation_percent = get_stage(text, "Перевод")
-editing, editing_percent = get_stage(text, "Редактура 1")
-proofreading, proofreading_percent = get_stage(text, "Редактура 2")
+translation, translation_percent = get_stage(
+    text,
+    "Перевод",
+)
+
+editing, editing_percent = get_stage(
+    text,
+    "Редактура 1",
+)
+
+proofreading, proofreading_percent = get_stage(
+    text,
+    "Редактура 2",
+)
 
 
-# Если на странице есть картинка OpenGraph — используем её как обложку.
-thumbnail_url = None
-
-og_image = soup.find("meta", property="og:image")
-
-if og_image and og_image.get("content"):
-    thumbnail_url = urljoin(PAGE_URL, og_image["content"])
+# Время Киева
+now = datetime.now(
+    ZoneInfo("Europe/Kyiv")
+)
 
 
-now = datetime.now(ZoneInfo("Europe/Kyiv"))
-
-
-embed = {
-    "title": f"📊 {GAME_TITLE}",
+# Верхний embed — Steam-баннер
+banner_embed = {
     "url": PAGE_URL,
-    "description": (
-        "Автоматически обновляемый прогресс перевода "
-        "проекта **NightwhisperTL**."
+    "color": 0x5865F2,
+    "image": {
+        "url": BANNER_URL
+    },
+}
+
+
+# Основной embed
+progress_embed = {
+    "title": (
+        f"📊 {GAME_TITLE}"
     ),
+
+    "url": PAGE_URL,
+
+    "description": (
+        "Автоматически обновляемый прогресс "
+        "перевода проекта **NightwhisperTL**."
+    ),
+
     "color": 0x5865F2,
 
     "fields": [
@@ -122,12 +173,14 @@ embed = {
             total,
             translation_percent,
         ),
+
         make_field(
             "✏️ Редактура",
             editing,
             total,
             editing_percent,
         ),
+
         make_field(
             "🔎 Вычитка",
             proofreading,
@@ -139,45 +192,57 @@ embed = {
     "footer": {
         "text": (
             "Источник: Visual Novel Chart"
-            f" • Обновлено: {now:%d.%m.%Y %H:%M}"
+            f" • Обновлено: "
+            f"{now:%d.%m.%Y %H:%M}"
         )
     },
 }
 
 
-if thumbnail_url:
-    embed["thumbnail"] = {
-        "url": thumbnail_url
-    }
-
-
 payload = {
     "username": "NightwhisperTL Progress",
+
     "allowed_mentions": {
         "parse": []
     },
-    "embeds": [embed],
+
+    "embeds": [
+        banner_embed,
+        progress_embed,
+    ],
 }
 
 
+# Обновляем уже существующее сообщение
 result = requests.patch(
-    f"{WEBHOOK_URL}/messages/{MESSAGE_ID}",
+    (
+        f"{WEBHOOK_URL}/messages/"
+        f"{MESSAGE_ID}"
+    ),
     json=payload,
     timeout=30,
 )
 
 result.raise_for_status()
 
+
+# Информация в логах GitHub Actions
 print("Сообщение успешно обновлено.")
+
 print(
-    f"Перевод: {translation}/{total} "
+    f"Перевод: "
+    f"{translation}/{total} "
     f"({translation_percent:.2f}%)"
 )
+
 print(
-    f"Редактура: {editing}/{total} "
+    f"Редактура: "
+    f"{editing}/{total} "
     f"({editing_percent:.2f}%)"
 )
+
 print(
-    f"Вычитка: {proofreading}/{total} "
+    f"Вычитка: "
+    f"{proofreading}/{total} "
     f"({proofreading_percent:.2f}%)"
 )
