@@ -31,7 +31,7 @@ def format_number(value):
     return f"{value:,}".replace(",", " ")
 
 
-def progress_bar(percent, width=34):
+def progress_bar(percent, width=46):
     filled = round(percent / 100 * width)
     filled = max(0, min(width, filled))
 
