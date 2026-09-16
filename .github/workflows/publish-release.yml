@@ -1,0 +1,173 @@
+name: Publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      game_title:
+        description: "Название игры"
+        required: true
+        default: "Utawarerumono: Prelude to the Fallen"
+        type: string
+
+      version:
+        description: "Версия"
+        required: false
+        default: "v0.1"
+        type: string
+
+      release_type:
+        description: "Тип: демо / патч / релиз и т.д."
+        required: false
+        default: "Демо"
+        type: string
+
+      date_text:
+        description: "Дата. Пусто = сегодняшняя"
+        required: false
+        default: ""
+        type: string
+
+      banner_url:
+        description: "Прямая ссылка на баннер"
+        required: false
+        default: "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1151450/header.jpg?t=1732445188"
+        type: string
+
+      game_url:
+        description: "Ссылка на страницу игры"
+        required: false
+        default: "https://store.steampowered.com/app/1151450/"
+        type: string
+
+      description:
+        description: "Дополнительное описание"
+        required: false
+        default: ""
+        type: string
+
+      status_1:
+        description: "Что переведено — пункт 1"
+        required: false
+        default: "Переведено примерно **20%** основного сюжета"
+        type: string
+
+      status_2:
+        description: "Что переведено — пункт 2"
+        required: false
+        default: "Частично переведён глоссарий"
+        type: string
+
+      status_3:
+        description: "Что переведено — пункт 3"
+        required: false
+        default: "Переведена большая часть текстур"
+        type: string
+
+      status_4:
+        description: "Что переведено — пункт 4"
+        required: false
+        default: ""
+        type: string
+
+      status_5:
+        description: "Что переведено — пункт 5"
+        required: false
+        default: ""
+        type: string
+
+      install_text:
+        description: "Инструкция по установке"
+        required: false
+        default: "Распакуйте содержимое архива в папку с игрой с заменой файлов."
+        type: string
+
+      note_text:
+        description: "Дополнительное примечание"
+        required: false
+        default: ""
+        type: string
+
+      download_url:
+        description: "Ссылка на скачивание"
+        required: true
+        type: string
+
+      button_label:
+        description: "Текст кнопки"
+        required: true
+        default: "Скачать перевод"
+        type: string
+
+      footer_text:
+        description: "Текст внизу карточки"
+        required: false
+        default: "NightwhisperTL"
+        type: string
+
+      accent_color:
+        description: "Цвет карточки HEX без #"
+        required: false
+        default: "5865F2"
+        type: string
+
+      message_id:
+        description: "ID старого поста для редактирования. Новый пост = пусто"
+        required: false
+        default: ""
+        type: string
+
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Publish Discord release
+        env:
+
+          DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+
+          GAME_TITLE: ${{ inputs.game_title }}
+          VERSION: ${{ inputs.version }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          DATE_TEXT: ${{ inputs.date_text }}
+
+          BANNER_URL: ${{ inputs.banner_url }}
+          GAME_URL: ${{ inputs.game_url }}
+
+          DESCRIPTION: ${{ inputs.description }}
+
+          STATUS_1: ${{ inputs.status_1 }}
+          STATUS_2: ${{ inputs.status_2 }}
+          STATUS_3: ${{ inputs.status_3 }}
+          STATUS_4: ${{ inputs.status_4 }}
+          STATUS_5: ${{ inputs.status_5 }}
+
+          INSTALL_TEXT: ${{ inputs.install_text }}
+          NOTE_TEXT: ${{ inputs.note_text }}
+
+          DOWNLOAD_URL: ${{ inputs.download_url }}
+          BUTTON_LABEL: ${{ inputs.button_label }}
+
+          FOOTER_TEXT: ${{ inputs.footer_text }}
+          ACCENT_COLOR: ${{ inputs.accent_color }}
+
+          MESSAGE_ID: ${{ inputs.message_id }}
+
+        run: python publish_release.py
