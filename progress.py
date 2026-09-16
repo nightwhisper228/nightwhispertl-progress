@@ -1,153 +1,183 @@
 import os
 import re
-import json
+from datetime import datetime
+from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
+
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, timezone, timedelta
 
-WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"]
-MESSAGE_ID = os.environ["DISCORD_MESSAGE_ID"]
 
-URL = "https://visual-novel-chart.ru/translation/utawarerumono"
+PAGE_URL = "https://visual-novel-chart.ru/translation/utawarerumono"
+
+WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"].rstrip("/")
+MESSAGE_ID = os.environ["DISCORD_MESSAGE_ID"].strip()
 
 GAME_TITLE = "Utawarerumono: Prelude to the Fallen"
-GAME_URL = "https://visual-novel-chart.ru/translation/utawarerumono"
-
-# Можешь потом заменить на другую картинку, если захочешь
-THUMBNAIL_URL = "https://upload.wikimedia.org/wikipedia/en/3/31/Utawarerumono_Prelude_to_the_Fallen_cover.jpg"
-
-EMBED_COLOR = 0x5865F2  # Discord blurple
 
 
-def make_bar(percent, length=18):
-    filled = round(percent / 100 * length)
-    empty = length - filled
-    return "█" * filled + "░" * empty
+def clean_number(value):
+    return int(re.sub(r"\D", "", value))
 
 
-def extract_numbers(text):
-    """
-    Пытается вытащить:
-    - процент
-    - текущие строки
-    - всего строк
-
-    Подстраивается под формат вроде:
-    '54.2% (1234 / 2276)'
-    """
-    percent = 0.0
-    current = 0
-    total = 0
-
-    percent_match = re.search(r"(\d+(?:[.,]\d+)?)\s*%", text)
-    if percent_match:
-        percent = float(percent_match.group(1).replace(",", "."))
-
-    frac_match = re.search(r"(\d+)\s*/\s*(\d+)", text)
-    if frac_match:
-        current = int(frac_match.group(1))
-        total = int(frac_match.group(2))
-
-    return percent, current, total
+def format_number(value):
+    return f"{value:,}".replace(",", " ")
 
 
-def find_progress_data(soup):
-    """
-    Ищем на странице блоки:
-    Перевод / Редактура / Редактура 2
-    и превращаем Редактура 2 -> Вычитка
-    """
-    text = soup.get_text("\n", strip=True)
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+def progress_bar(percent, width=18):
+    filled = round(percent / 100 * width)
+    filled = max(0, min(width, filled))
 
-    result = {
-        "Перевод": {"percent": 0.0, "current": 0, "total": 0},
-        "Редактура": {"percent": 0.0, "current": 0, "total": 0},
-        "Вычитка": {"percent": 0.0, "current": 0, "total": 0},
+    return "█" * filled + "░" * (width - filled)
+
+
+def get_total(text):
+    match = re.search(
+        r"Всего\s+строк\s*:\s*([\d\s]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    if not match:
+        raise RuntimeError("Не удалось найти общее количество строк")
+
+    return clean_number(match.group(1))
+
+
+def get_stage(text, label):
+    match = re.search(
+        rf"{re.escape(label)}\s*:\s*([\d\s]+)\s*"
+        rf"\(\s*([\d.,]+)\s*%\s*\)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    if not match:
+        raise RuntimeError(f"Не удалось найти данные: {label}")
+
+    current = clean_number(match.group(1))
+    percent = float(match.group(2).replace(",", "."))
+
+    return current, percent
+
+
+def make_field(name, current, total, percent):
+    return {
+        "name": name,
+        "value": (
+            f"`{progress_bar(percent)}` **{percent:.2f}%**\n"
+            f"{format_number(current)} / {format_number(total)}"
+        ),
+        "inline": False,
     }
 
-    mapping = {
-        "Перевод": "Перевод",
-        "Редактура": "Редактура",
-        "Редактура 2": "Вычитка",
+
+response = requests.get(
+    PAGE_URL,
+    timeout=30,
+    headers={
+        "User-Agent": "NightwhisperTL translation progress monitor"
+    },
+)
+
+response.raise_for_status()
+
+soup = BeautifulSoup(response.text, "html.parser")
+
+# Переводим страницу в сплошной текст.
+text = soup.get_text(" ", strip=True).replace("\xa0", " ")
+
+total = get_total(text)
+
+translation, translation_percent = get_stage(text, "Перевод")
+editing, editing_percent = get_stage(text, "Редактура 1")
+proofreading, proofreading_percent = get_stage(text, "Редактура 2")
+
+
+# Если на странице есть картинка OpenGraph — используем её как обложку.
+thumbnail_url = None
+
+og_image = soup.find("meta", property="og:image")
+
+if og_image and og_image.get("content"):
+    thumbnail_url = urljoin(PAGE_URL, og_image["content"])
+
+
+now = datetime.now(ZoneInfo("Europe/Kyiv"))
+
+
+embed = {
+    "title": f"📊 {GAME_TITLE}",
+    "url": PAGE_URL,
+    "description": (
+        "Автоматически обновляемый прогресс перевода "
+        "проекта **NightwhisperTL**."
+    ),
+    "color": 0x5865F2,
+
+    "fields": [
+        make_field(
+            "🌐 Перевод",
+            translation,
+            total,
+            translation_percent,
+        ),
+        make_field(
+            "✏️ Редактура",
+            editing,
+            total,
+            editing_percent,
+        ),
+        make_field(
+            "🔎 Вычитка",
+            proofreading,
+            total,
+            proofreading_percent,
+        ),
+    ],
+
+    "footer": {
+        "text": (
+            "Источник: Visual Novel Chart"
+            f" • Обновлено: {now:%d.%m.%Y %H:%M}"
+        )
+    },
+}
+
+
+if thumbnail_url:
+    embed["thumbnail"] = {
+        "url": thumbnail_url
     }
 
-    for i, line in enumerate(lines):
-        if line in mapping:
-            label = mapping[line]
 
-            # Ищем следующие 1-3 строки, где могут быть проценты / дроби
-            search_chunk = " ".join(lines[i + 1:i + 4])
-            percent, current, total = extract_numbers(search_chunk)
-
-            result[label] = {
-                "percent": percent,
-                "current": current,
-                "total": total,
-            }
-
-    return result
+payload = {
+    "username": "NightwhisperTL Progress",
+    "allowed_mentions": {
+        "parse": []
+    },
+    "embeds": [embed],
+}
 
 
-def build_field(name, percent, current, total):
-    bar = make_bar(percent)
-    value = f"`{bar}` **{percent:.1f}%**\n{current} / {total}"
-    return {"name": name, "value": value, "inline": False}
+result = requests.patch(
+    f"{WEBHOOK_URL}/messages/{MESSAGE_ID}",
+    json=payload,
+    timeout=30,
+)
 
+result.raise_for_status()
 
-def main():
-    response = requests.get(URL, timeout=30)
-    response.raise_for_status()
-
-    soup = BeautifulSoup(response.text, "html.parser")
-    data = find_progress_data(soup)
-
-    now_kyiv = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=3)))
-    updated_at = now_kyiv.strftime("%d.%m.%Y %H:%M")
-
-    embed = {
-        "title": GAME_TITLE,
-        "url": GAME_URL,
-        "description": "Автоматически обновляемый прогресс перевода проекта **NightwhisperTL**.",
-        "color": EMBED_COLOR,
-        "thumbnail": {"url": THUMBNAIL_URL},
-        "fields": [
-            build_field(
-                "Перевод",
-                data["Перевод"]["percent"],
-                data["Перевод"]["current"],
-                data["Перевод"]["total"],
-            ),
-            build_field(
-                "Редактура",
-                data["Редактура"]["percent"],
-                data["Редактура"]["current"],
-                data["Редактура"]["total"],
-            ),
-            build_field(
-                "Вычитка",
-                data["Вычитка"]["percent"],
-                data["Вычитка"]["current"],
-                data["Вычитка"]["total"],
-            ),
-        ],
-        "footer": {
-            "text": f"Источник: visual-novel-chart.ru • Обновлено: {updated_at}"
-        },
-    }
-
-    payload = {
-        "username": "NightwhisperTL Progress",
-        "content": "",
-        "embeds": [embed],
-    }
-
-    edit_url = f"{WEBHOOK_URL}/messages/{MESSAGE_ID}"
-    edit_response = requests.patch(edit_url, json=payload, timeout=30)
-    edit_response.raise_for_status()
-
-    print("Discord message updated successfully.")
-
-
-if __name__ == "__main__":
-    main()
+print("Сообщение успешно обновлено.")
+print(
+    f"Перевод: {translation}/{total} "
+    f"({translation_percent:.2f}%)"
+)
+print(
+    f"Редактура: {editing}/{total} "
+    f"({editing_percent:.2f}%)"
+)
+print(
+    f"Вычитка: {proofreading}/{total} "
+    f"({proofreading_percent:.2f}%)"
+)
