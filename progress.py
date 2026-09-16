@@ -31,7 +31,7 @@ def format_number(value):
     return f"{value:,}".replace(",", " ")
 
 
-def progress_bar(percent, width=18):
+def progress_bar(percent, width=34):
     filled = round(percent / 100 * width)
     filled = max(0, min(width, filled))
 
@@ -87,7 +87,6 @@ def make_field(name, current, total, percent):
     }
 
 
-# Получаем данные с Visual Novel Chart
 response = requests.get(
     PAGE_URL,
     timeout=30,
@@ -113,7 +112,6 @@ text = (
 )
 
 
-# Получаем значения прогресса
 total = get_total(text)
 
 translation, translation_percent = get_stage(
@@ -132,13 +130,11 @@ proofreading, proofreading_percent = get_stage(
 )
 
 
-# Время Киева
 now = datetime.now(
     ZoneInfo("Europe/Kyiv")
 )
 
 
-# Верхний embed — баннер Steam
 banner_embed = {
     "url": STEAM_URL,
     "color": 0x5865F2,
@@ -148,7 +144,6 @@ banner_embed = {
 }
 
 
-# Нижний embed — прогресс
 progress_embed = {
     "title": f"📊 {GAME_TITLE}",
 
@@ -203,7 +198,6 @@ payload = {
 }
 
 
-# Обновляем существующее сообщение Discord
 result = requests.patch(
     f"{WEBHOOK_URL}/messages/{MESSAGE_ID}",
     json=payload,
@@ -213,7 +207,6 @@ result = requests.patch(
 result.raise_for_status()
 
 
-# Лог GitHub Actions
 print("Сообщение успешно обновлено.")
 
 print(
