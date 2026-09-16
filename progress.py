@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 
 PAGE_URL = "https://visual-novel-chart.ru/translation/utawarerumono"
 
+STEAM_URL = "https://store.steampowered.com/app/1151450/"
+
 BANNER_URL = (
     "https://shared.fastly.steamstatic.com/"
     "store_item_assets/steam/apps/1151450/"
@@ -72,12 +74,7 @@ def get_stage(text, label):
     return current, percent
 
 
-def make_field(
-    name,
-    current,
-    total,
-    percent,
-):
+def make_field(name, current, total, percent):
     return {
         "name": name,
         "value": (
@@ -141,9 +138,9 @@ now = datetime.now(
 )
 
 
-# Верхний embed — Steam-баннер
+# Первый embed — баннер сверху
 banner_embed = {
-    "url": PAGE_URL,
+    "url": STEAM_URL,
     "color": 0x5865F2,
     "image": {
         "url": BANNER_URL
@@ -151,11 +148,9 @@ banner_embed = {
 }
 
 
-# Основной embed
+# Второй embed — основной прогресс
 progress_embed = {
-    "title": (
-        f"📊 {GAME_TITLE}"
-    ),
+    "title": f"📊 {GAME_TITLE}",
 
     "url": PAGE_URL,
 
@@ -213,7 +208,7 @@ payload = {
 }
 
 
-# Обновляем уже существующее сообщение
+# Обновляем существующее сообщение
 result = requests.patch(
     (
         f"{WEBHOOK_URL}/messages/"
@@ -226,7 +221,7 @@ result = requests.patch(
 result.raise_for_status()
 
 
-# Информация в логах GitHub Actions
+# Логи GitHub Actions
 print("Сообщение успешно обновлено.")
 
 print(
